@@ -166,23 +166,35 @@ func (i *Iradix[T]) Delete(key []byte) (oldVal T, existed bool, newTree *Iradix[
 
 func (i Iradix[T]) Iterate() iter.Seq2[[]byte, T] {
 	return func(yield func([]byte, T) bool) {
-		var iterate func(prefix []byte, n *node[T])
-		iterate = func(prefix []byte, n *node[T]) {
-			currentPrefix := prefix
+		buf := make([]byte, 0, 64)
+
+		var iterate func(buf []byte, n *node[T]) bool
+		iterate = func(buf []byte, n *node[T]) bool {
+			currentLen := len(buf)
 			if n != i.root {
-				currentPrefix = append(slices.Clone(prefix), n.path...)
+				buf = append(buf, n.path...)
 			}
+
 			if n.val != nil {
-				if !yield(currentPrefix, *n.val) {
-					iterate = func(prefix []byte, n *node[T]) {}
-					return
+				if n == i.root {
+					buf = nil // Root node has nil key
+				}
+				if !yield(buf, *n.val) {
+					return false
 				}
 			}
+
 			for _, child := range n.children {
-				iterate(currentPrefix, child)
+				if !iterate(buf, child) {
+					return false
+				}
 			}
+
+			buf = buf[:currentLen]
+			return true
 		}
-		iterate(nil, i.root)
+
+		iterate(buf, i.root)
 	}
 }
 
