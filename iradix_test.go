@@ -93,6 +93,64 @@ func TestIradixInsertGetDelete(t *testing.T) {
 				},
 			},
 		},
+		{
+			name:   "Path splitting - insert causes node split",
+			iradix: New[string](),
+			items: []testItem{
+				{
+					key: []byte("test"),
+					val: "test-val",
+				},
+				{
+					key: []byte("testing"),
+					val: "testing-val",
+				},
+			},
+		},
+		{
+			name:   "Path splitting - multiple splits",
+			iradix: New[string](),
+			items: []testItem{
+				{
+					key: []byte("abcd"),
+					val: "abcd-val",
+				},
+				{
+					key: []byte("abcdefgh"),
+					val: "abcdefgh-val",
+				},
+				{
+					key: []byte("abcxyz"),
+					val: "abcxyz-val",
+				},
+			},
+		},
+		{
+			name:   "Complex path compression scenario",
+			iradix: New[string](),
+			items: []testItem{
+				{
+					key: []byte("namespace"),
+					val: "namespace-val",
+				},
+				{
+					key: []byte("namespace/pod-1"),
+					val: "posts-val",
+				},
+				{
+					key: []byte("namespace/pod-2/owner-1"),
+					val: "owner-1-val",
+				},
+				{
+					key: []byte("namespace/pod-2/owner-2"),
+					val: "owner-2-val",
+				},
+				{
+					key: []byte("namespaces"),
+					val: "namespaces-val",
+				},
+			},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -157,11 +215,13 @@ func validateTree[T any](t *testing.T, tree *Iradix[T]) {
 		seenChildKeys := map[byte]struct{}{}
 		for _, child := range n.children {
 			iterate(child, append(parents, n))
-			_, seen := seenChildKeys[child.key]
-			if seen {
-				t.Errorf("found two children with key %v", child.key)
+			if len(child.path) > 0 {
+				_, seen := seenChildKeys[child.path[0]]
+				if seen {
+					t.Errorf("found two children with first byte %v", child.path[0])
+				}
+				seenChildKeys[child.path[0]] = struct{}{}
 			}
-			seenChildKeys[child.key] = struct{}{}
 		}
 	}
 
@@ -218,6 +278,142 @@ func validateDelete(t *testing.T, tree *Iradix[string], expectPresent bool, item
 	}
 
 	return tree
+}
+
+func TestPathCompressionUpdates(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name   string
+		setup  []testItem
+		update testItem
+	}{
+		{
+			name: "Update value in compressed path",
+			setup: []testItem{
+				{key: []byte("namespacelication/json"), val: "json-val"},
+			},
+			update: testItem{key: []byte("namespacelication/json"), val: "json-updated", oldVal: "json-val"},
+		},
+		{
+			name: "Update causes path split",
+			setup: []testItem{
+				{key: []byte("longprefix"), val: "long-val"},
+			},
+			update: testItem{key: []byte("long"), val: "short-val"},
+		},
+		{
+			name: "Update existing split node",
+			setup: []testItem{
+				{key: []byte("prefix"), val: "prefix-val"},
+				{key: []byte("prefixlong"), val: "prefixlong-val"},
+			},
+			update: testItem{key: []byte("prefix"), val: "prefix-updated", oldVal: "prefix-val"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			tree := New[string]()
+
+			for _, item := range tc.setup {
+				tree = validateInsert(t, tree, item)
+			}
+
+			tree = validateInsert(t, tree, tc.update)
+
+			val, exists := tree.Get(tc.update.key)
+			require.True(t, exists)
+			require.Equal(t, tc.update.val, val)
+
+			// Verify other values are still there
+			for _, item := range tc.setup {
+				if !slices.Equal(item.key, tc.update.key) {
+					val, exists := tree.Get(item.key)
+					require.True(t, exists)
+					require.Equal(t, item.val, val)
+				}
+			}
+
+			validateTree(t, tree)
+		})
+	}
+}
+
+func TestPathCompressionDeletion(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name   string
+		setup  []testItem
+		delete []byte
+		expect []testItem
+	}{
+		{
+			name: "Delete from compressed path causes merge",
+			setup: []testItem{
+				{key: []byte("test"), val: "test-val"},
+				{key: []byte("testing"), val: "testing-val"},
+			},
+			delete: []byte("test"),
+			expect: []testItem{
+				{key: []byte("testing"), val: "testing-val"},
+			},
+		},
+		{
+			name: "Delete leaf node with compression",
+			setup: []testItem{
+				{key: []byte("namespace/pod-1"), val: "pod-1-val"},
+				{key: []byte("namespace/pod-2"), val: "pod-2-val"},
+				{key: []byte("namespace/pod-3"), val: "pod-3-val"},
+			},
+			delete: []byte("namespace/pod-3"),
+			expect: []testItem{
+				{key: []byte("namespace/pod-1"), val: "pod-1-val"},
+				{key: []byte("namespace/pod-2"), val: "pod-2-val"},
+			},
+		},
+		{
+			name: "Delete causes chain compression",
+			setup: []testItem{
+				{key: []byte("a"), val: "a-val"},
+				{key: []byte("abc"), val: "abc-val"},
+				{key: []byte("abcdef"), val: "abcdef-val"},
+			},
+			delete: []byte("abc"),
+			expect: []testItem{
+				{key: []byte("a"), val: "a-val"},
+				{key: []byte("abcdef"), val: "abcdef-val"},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			tree := New[string]()
+
+			for _, item := range tc.setup {
+				tree = validateInsert(t, tree, item)
+			}
+
+			_, existed, tree := tree.Delete(tc.delete)
+			require.True(t, existed)
+			validateTree(t, tree)
+
+			for _, item := range tc.expect {
+				val, exists := tree.Get(item.key)
+				require.True(t, exists, "key %s should exist", item.key)
+				require.Equal(t, item.val, val)
+			}
+
+			_, exists := tree.Get(tc.delete)
+			require.False(t, exists, "deleted key %s should not exist", tc.delete)
+		})
+	}
 }
 
 func TestParallelInsertGet(t *testing.T) {

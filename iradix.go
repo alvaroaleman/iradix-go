@@ -1,6 +1,7 @@
 package iradix
 
 import (
+	"bytes"
 	"iter"
 	"reflect"
 	"slices"
@@ -15,23 +16,28 @@ type Iradix[T any] struct {
 }
 
 func (i *Iradix[T]) Get(key []byte) (T, bool) {
-	for currentNode := i.root; currentNode != nil; {
-		if len(key) == 0 {
-			if currentNode.val != nil {
-				return *currentNode.val, true
-			}
-			break
-		}
+	currentNode := i.root
 
+	for len(key) > 0 {
 		childIdx := slices.IndexFunc(currentNode.children, func(n *node[T]) bool {
-			return n.key == key[0]
+			return len(n.path) > 0 && n.path[0] == key[0]
 		})
+
 		if childIdx == -1 {
-			break
+			return *new(T), false
 		}
 
-		key = key[1:]
-		currentNode = currentNode.children[childIdx]
+		child := currentNode.children[childIdx]
+		if !bytes.HasPrefix(key, child.path) {
+			return *new(T), false
+		}
+
+		key = key[len(child.path):]
+		currentNode = child
+	}
+
+	if currentNode.val != nil {
+		return *currentNode.val, true
 	}
 
 	return *new(T), false
@@ -51,22 +57,49 @@ func (i *Iradix[T]) Insert(key []byte, val T) (oldVal T, existed bool, newTree *
 	}
 
 	currentNode := newRoot
-	for ; len(key) > 0; key = key[1:] {
+	for len(key) > 0 {
 		childIdx := slices.IndexFunc(currentNode.children, func(n *node[T]) bool {
-			return n.key == key[0]
+			return len(n.path) > 0 && n.path[0] == key[0]
 		})
+
 		if childIdx == -1 {
 			newChild := &node[T]{
-				key: key[0],
+				path: slices.Clone(key),
+				val:  &val,
 			}
 			currentNode.children = append(currentNode.children, newChild)
-			currentNode = newChild
-			continue
+			return oldVal, existed, &Iradix[T]{root: newRoot}
 		}
 
-		newChild := copyNode(currentNode.children[childIdx])
-		currentNode.children[childIdx] = newChild
-		currentNode = newChild
+		child := currentNode.children[childIdx]
+		commonLen := commonPrefixLen(key, child.path)
+
+		if commonLen == len(child.path) {
+			newChild := copyNode(child)
+			currentNode.children[childIdx] = newChild
+			currentNode = newChild
+			key = key[commonLen:]
+		} else {
+			splitNode := &node[T]{
+				path:     slices.Clone(child.path[:commonLen]),
+				children: []*node[T]{copyNode(child)},
+			}
+
+			splitNode.children[0].path = slices.Clone(child.path[commonLen:])
+
+			if commonLen == len(key) {
+				splitNode.val = &val
+			} else {
+				newChild := &node[T]{
+					path: slices.Clone(key[commonLen:]),
+					val:  &val,
+				}
+				splitNode.children = append(splitNode.children, newChild)
+			}
+
+			currentNode.children[childIdx] = splitNode
+			return oldVal, existed, &Iradix[T]{root: newRoot}
+		}
 	}
 
 	if currentNode.val != nil {
@@ -89,14 +122,15 @@ func (i *Iradix[T]) Delete(key []byte) (oldVal T, existed bool, newTree *Iradix[
 	currentNode := newRoot
 	for len(key) > 0 {
 		childIdx := slices.IndexFunc(currentNode.children, func(n *node[T]) bool {
-			return n.key == key[0]
+			return len(n.path) > 0 && n.path[0] == key[0]
 		})
 
+		child := currentNode.children[childIdx]
 		parents = append(parents, currentNode)
 		childIndices = append(childIndices, childIdx)
-		currentNode = copyNode(currentNode.children[childIdx])
+		currentNode = copyNode(child)
 		parents[len(parents)-1].children[childIdx] = currentNode
-		key = key[1:]
+		key = key[len(currentNode.path):]
 	}
 
 	if currentNode.val != nil {
@@ -104,11 +138,22 @@ func (i *Iradix[T]) Delete(key []byte) (oldVal T, existed bool, newTree *Iradix[
 		currentNode.val = nil
 	}
 
-	// Clean up empty nodes
-	for idx := len(parents) - 1; idx >= 0 && currentNode.val == nil && len(currentNode.children) == 0; idx-- {
+	// Clean up empty nodes and compress single-child chains
+	for idx := len(parents) - 1; idx >= 0; idx-- {
 		parent := parents[idx]
 		childIdx := childIndices[idx]
-		parent.children = slices.Delete(parent.children, childIdx, childIdx+1)
+
+		if currentNode.val == nil && len(currentNode.children) == 0 {
+			parent.children = slices.Delete(parent.children, childIdx, childIdx+1)
+		} else if currentNode.val == nil && len(currentNode.children) == 1 {
+			onlyChild := currentNode.children[0]
+			currentNode.path = append(slices.Clone(currentNode.path), onlyChild.path...)
+			currentNode.val = onlyChild.val
+			currentNode.children = onlyChild.children
+		} else {
+			break
+		}
+
 		currentNode = parent
 	}
 
@@ -119,17 +164,18 @@ func (i Iradix[T]) Iterate() iter.Seq2[[]byte, T] {
 	return func(yield func([]byte, T) bool) {
 		var iterate func(prefix []byte, n *node[T])
 		iterate = func(prefix []byte, n *node[T]) {
+			currentPrefix := prefix
 			if n != i.root {
-				prefix = append(prefix, n.key)
+				currentPrefix = append(slices.Clone(prefix), n.path...)
 			}
 			if n.val != nil {
-				if !yield(prefix, *n.val) {
+				if !yield(currentPrefix, *n.val) {
 					iterate = func(prefix []byte, n *node[T]) {}
 					return
 				}
 			}
 			for _, child := range n.children {
-				iterate(prefix, child)
+				iterate(currentPrefix, child)
 			}
 		}
 		iterate(nil, i.root)
@@ -137,15 +183,25 @@ func (i Iradix[T]) Iterate() iter.Seq2[[]byte, T] {
 }
 
 type node[T any] struct {
-	key      byte
+	path     []byte
 	val      *T
 	children []*node[T]
 }
 
 func copyNode[T any](n *node[T]) *node[T] {
 	return &node[T]{
-		key:      n.key,
+		path:     slices.Clone(n.path),
 		val:      n.val,
 		children: slices.Clone(n.children),
 	}
+}
+
+func commonPrefixLen(a, b []byte) int {
+	maxLen := min(len(a), len(b))
+	for i := 0; i < maxLen; i++ {
+		if a[i] != b[i] {
+			return i
+		}
+	}
+	return maxLen
 }
