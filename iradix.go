@@ -77,10 +77,10 @@ func (i *Iradix[T]) Insert(key []byte, val T) (oldVal T, existed bool, newTree *
 			key = key[commonLen:]
 		} else {
 			splitNode := &node[T]{
-				path: slices.Clone(child.path[:commonLen]),
+				path: child.path[:commonLen],
 			}
 			childCopy := copyNode(child)
-			childCopy.path = slices.Clone(child.path[commonLen:])
+			childCopy.path = child.path[commonLen:]
 			insertChild(splitNode, childCopy)
 
 			if commonLen == len(key) {
@@ -184,7 +184,7 @@ type node[T any] struct {
 
 func copyNode[T any](n *node[T]) *node[T] {
 	return &node[T]{
-		path:     slices.Clone(n.path),
+		path:     n.path,
 		val:      n.val,
 		children: slices.Clone(n.children),
 	}
