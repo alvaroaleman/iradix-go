@@ -1,8 +1,10 @@
 package iradix
 
 import (
+	"fmt"
 	"reflect"
 	"slices"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -258,4 +260,35 @@ func TestParallelInsertDelete(t *testing.T) {
 		tree.Get([]byte("foo"))
 		wg.Done()
 	}()
+}
+
+func BenchmarkIradixWriteRead(b *testing.B) {
+	const value = "the value we store"
+	for i := 0; i < b.N; i++ {
+		tree := New[string]()
+
+		for cycle := 0; cycle < 10; cycle++ {
+			// Insert 100 elements with common prefix
+			cycle := 1
+			prefix := fmt.Sprintf("prefix%d/", cycle)
+			for j := 0; j < 100; j++ {
+				key := []byte(prefix + strconv.Itoa(j))
+				_, _, tree = tree.Insert(key, value)
+			}
+
+			// Read 100 elements 3 times with different prefixes
+			readPrefixes := []string{
+				"prefix" + strconv.Itoa(max(0, cycle-2)) + "_",
+				"prefix" + strconv.Itoa(max(0, cycle-1)) + "_",
+				"prefix" + strconv.Itoa(cycle) + "_",
+			}
+
+			for _, readPrefix := range readPrefixes {
+				for j := 0; j < 100; j++ {
+					key := []byte(readPrefix + strconv.Itoa(j))
+					tree.Get(key)
+				}
+			}
+		}
+	}
 }
