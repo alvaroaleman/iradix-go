@@ -3,6 +3,7 @@ package iradix
 import (
 	"reflect"
 	"slices"
+	"sync"
 	"testing"
 
 	"github.com/davecgh/go-spew/spew"
@@ -96,36 +97,37 @@ func TestIradixInsertGetDelete(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
+			tree := tc.iradix
 			// Delete of items in empty tree
-			validateDelete(t, tc.iradix, false, tc.items...)
+			validateDelete(t, tree, false, tc.items...)
 
 			// Item by item create->get->delete
 			for _, item := range tc.items {
-				validateInsert(t, tc.iradix, item)
+				tree = validateInsert(t, tree, item)
 
 				itemsExcludingCurrent := slices.DeleteFunc(slices.Clone(tc.items), func(i testItem) bool {
 					return reflect.DeepEqual(item, i)
 				})
-				validateDelete(t, tc.iradix, false, itemsExcludingCurrent...)
+				validateDelete(t, tree, false, itemsExcludingCurrent...)
 
-				val, exists := tc.iradix.Get(item.key)
+				val, exists := tree.Get(item.key)
 				require.True(t, exists)
 				require.Equal(t, item.val, val)
 
-				validateDelete(t, tc.iradix, true, item)
+				validateDelete(t, tree, true, item)
 			}
 
 			// Batch create, get, list and delete
-			validateInsert(t, tc.iradix, tc.items...)
+			tree = validateInsert(t, tree, tc.items...)
 
 			for _, item := range tc.items {
-				val, exists := tc.iradix.Get(item.key)
+				val, exists := tree.Get(item.key)
 				require.True(t, exists)
 				require.Equal(t, item.val, val)
 			}
 
 			idx := 0
-			for k, v := range tc.iradix.Iterate() {
+			for k, v := range tree.Iterate() {
 				if idx == len(tc.items) {
 					t.Fatalf("got superfluous item: key=%v, val=%v", k, v)
 				}
@@ -134,7 +136,7 @@ func TestIradixInsertGetDelete(t *testing.T) {
 				idx++
 			}
 
-			validateDelete(t, tc.iradix, true, tc.items...)
+			validateDelete(t, tree, true, tc.items...)
 		})
 	}
 }
@@ -164,23 +166,28 @@ func validateTree[T any](t *testing.T, tree *Iradix[T]) {
 	iterate(tree.root, nil)
 }
 
-func validateInsert(t *testing.T, tree *Iradix[string], items ...testItem) {
+func validateInsert(t *testing.T, tree *Iradix[string], items ...testItem) *Iradix[string] {
 	t.Helper()
+	oldVal, existed := "", false
 	for idx, item := range items {
-		originalTree := spew.Sdump(tree)
-		oldVal, existed := tree.Insert(item.key, item.val)
+		originalTree := tree
+		originalTreeDump := spew.Sdump(tree)
+		oldVal, existed, tree = tree.Insert(item.key, item.val)
 		newTree := spew.Sdump(tree)
 		validateTree(t, tree)
 		require.Equal(t,
 			item.oldVal != "",
 			existed,
-			"insert: presence of item %v incorrect\ntree: %s\noriginal tree: %s", item.key, newTree, originalTree,
+			"insert: presence of item %v incorrect\ntree: %s\noriginal tree: %s", item.key, newTree, originalTreeDump,
 		)
 		require.Equal(t, item.oldVal != "", existed)
 		require.Equal(t, item.oldVal, oldVal)
+		require.Equal(t, originalTreeDump, spew.Sdump(originalTree), "original tree should be unmodified")
 
 		validateDelete(t, tree, false, items[idx+1:]...)
 	}
+
+	return tree
 }
 
 func validateDelete(t *testing.T, tree *Iradix[string], expectPresent bool, items ...testItem) {
@@ -206,4 +213,21 @@ func validateDelete(t *testing.T, tree *Iradix[string], expectPresent bool, item
 		_, exists := tree.Get(item.key)
 		require.False(t, exists, "deleted item %s still exists", item.key)
 	}
+}
+
+func TestParallelInsertGet(t *testing.T) {
+	tree := New[string]()
+
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+
+	go func() {
+		tree.Insert([]byte("foo"), "something")
+		wg.Done()
+	}()
+
+	go func() {
+		tree.Get([]byte("foo"))
+		wg.Done()
+	}()
 }

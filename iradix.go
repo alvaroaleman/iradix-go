@@ -36,27 +36,41 @@ func (i *Iradix[T]) Get(key []byte) (T, bool) {
 	return *new(T), false
 }
 
-func (i *Iradix[T]) Insert(key []byte, val T) (oldVal T, existed bool) {
-	for currentNode := i.root; ; {
-		if len(key) == 0 {
-			if currentNode.val != nil {
-				oldVal, existed = *currentNode.val, true
-			}
-			currentNode.val = &val
-			return oldVal, existed
+func (i *Iradix[T]) Insert(key []byte, val T) (oldVal T, existed bool, newTree *Iradix[T]) {
+	newRoot := copyNode(i.root)
+	if len(key) == 0 {
+		if newRoot.val != nil {
+			oldVal, existed = *newRoot.val, true
 		}
+		newRoot.val = &val
+		return oldVal, existed, &Iradix[T]{root: newRoot}
+	}
 
+	currentNode := newRoot
+	for ; len(key) > 0; key = key[1:] {
 		childIdx := slices.IndexFunc(currentNode.children, func(n *node[T]) bool {
 			return n.key == key[0]
 		})
 		if childIdx == -1 {
-			currentNode.children = append(currentNode.children, &node[T]{key: key[0]})
-			childIdx = len(currentNode.children) - 1
+			newChild := &node[T]{
+				key: key[0],
+			}
+			currentNode.children = append(currentNode.children, newChild)
+			currentNode = newChild
+			continue
 		}
 
-		key = key[1:]
-		currentNode = currentNode.children[childIdx]
+		newChild := copyNode(currentNode.children[childIdx])
+		currentNode.children[childIdx] = newChild
+		currentNode = newChild
 	}
+
+	if currentNode.val != nil {
+		oldVal, existed = *currentNode.val, true
+	}
+	currentNode.val = &val
+
+	return oldVal, existed, &Iradix[T]{root: newRoot}
 }
 
 func (i *Iradix[T]) Delete(key []byte) (oldVal T, existed bool) {
@@ -119,4 +133,12 @@ type node[T any] struct {
 	key      byte
 	val      *T
 	children []*node[T]
+}
+
+func copyNode[T any](n *node[T]) *node[T] {
+	return &node[T]{
+		key:      n.key,
+		val:      n.val,
+		children: slices.Clone(n.children),
+	}
 }
