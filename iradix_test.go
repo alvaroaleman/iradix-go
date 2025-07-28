@@ -213,7 +213,7 @@ func validateTree[T any](t *testing.T, tree *Iradix[T]) {
 	var iterate func(n *node[T], parents []*node[T])
 	iterate = func(n *node[T], parents []*node[T]) {
 		t.Helper()
-		if n.val == nil && len(n.children) == 0 && n != tree.root {
+		if n.val == nil && len(n.children) < 2 && n != tree.root {
 			t.Errorf("found empty node, parents: %+v", parents)
 		}
 		seenChildKeys := map[byte]struct{}{}
