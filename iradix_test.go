@@ -99,7 +99,7 @@ func TestIradixInsertGetDelete(t *testing.T) {
 
 			tree := tc.iradix
 			// Delete of items in empty tree
-			validateDelete(t, tree, false, tc.items...)
+			tree = validateDelete(t, tree, false, tc.items...)
 
 			// Item by item create->get->delete
 			for _, item := range tc.items {
@@ -108,13 +108,13 @@ func TestIradixInsertGetDelete(t *testing.T) {
 				itemsExcludingCurrent := slices.DeleteFunc(slices.Clone(tc.items), func(i testItem) bool {
 					return reflect.DeepEqual(item, i)
 				})
-				validateDelete(t, tree, false, itemsExcludingCurrent...)
+				tree = validateDelete(t, tree, false, itemsExcludingCurrent...)
 
 				val, exists := tree.Get(item.key)
 				require.True(t, exists)
 				require.Equal(t, item.val, val)
 
-				validateDelete(t, tree, true, item)
+				tree = validateDelete(t, tree, true, item)
 			}
 
 			// Batch create, get, list and delete
@@ -136,7 +136,7 @@ func TestIradixInsertGetDelete(t *testing.T) {
 				idx++
 			}
 
-			validateDelete(t, tree, true, tc.items...)
+			tree = validateDelete(t, tree, true, tc.items...)
 		})
 	}
 }
@@ -190,11 +190,12 @@ func validateInsert(t *testing.T, tree *Iradix[string], items ...testItem) *Irad
 	return tree
 }
 
-func validateDelete(t *testing.T, tree *Iradix[string], expectPresent bool, items ...testItem) {
+func validateDelete(t *testing.T, tree *Iradix[string], expectPresent bool, items ...testItem) *Iradix[string] {
 	t.Helper()
+	oldVal, existed := "", false
 	for _, item := range items {
 		originalTree := spew.Sdump(tree)
-		oldVal, existed := tree.Delete(item.key)
+		oldVal, existed, tree = tree.Delete(item.key)
 		validateTree(t, tree)
 		newTree := spew.Sdump(tree)
 		require.Equal(t,
@@ -213,16 +214,43 @@ func validateDelete(t *testing.T, tree *Iradix[string], expectPresent bool, item
 		_, exists := tree.Get(item.key)
 		require.False(t, exists, "deleted item %s still exists", item.key)
 	}
+
+	return tree
 }
 
 func TestParallelInsertGet(t *testing.T) {
+	t.Parallel()
 	tree := New[string]()
+
+	wg := sync.WaitGroup{}
+	wg.Add(3)
+
+	go func() {
+		tree.Insert([]byte("foo"), "something")
+		wg.Done()
+	}()
+
+	go func() {
+		tree.Delete([]byte("foo"))
+		wg.Done()
+	}()
+
+	go func() {
+		tree.Get([]byte("foo"))
+		wg.Done()
+	}()
+}
+
+func TestParallelInsertDelete(t *testing.T) {
+	t.Parallel()
+	tree := New[string]()
+	_, _, tree = tree.Insert([]byte("foo"), "something")
 
 	wg := sync.WaitGroup{}
 	wg.Add(2)
 
 	go func() {
-		tree.Insert([]byte("foo"), "something")
+		tree.Delete([]byte("foo"))
 		wg.Done()
 	}()
 

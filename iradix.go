@@ -2,6 +2,7 @@ package iradix
 
 import (
 	"iter"
+	"reflect"
 	"slices"
 )
 
@@ -37,6 +38,9 @@ func (i *Iradix[T]) Get(key []byte) (T, bool) {
 }
 
 func (i *Iradix[T]) Insert(key []byte, val T) (oldVal T, existed bool, newTree *Iradix[T]) {
+	if oldVal, exists := i.Get(key); exists && reflect.DeepEqual(oldVal, val) {
+		return oldVal, true, i
+	}
 	newRoot := copyNode(i.root)
 	if len(key) == 0 {
 		if newRoot.val != nil {
@@ -73,22 +77,25 @@ func (i *Iradix[T]) Insert(key []byte, val T) (oldVal T, existed bool, newTree *
 	return oldVal, existed, &Iradix[T]{root: newRoot}
 }
 
-func (i *Iradix[T]) Delete(key []byte) (oldVal T, existed bool) {
+func (i *Iradix[T]) Delete(key []byte) (oldVal T, existed bool, newTree *Iradix[T]) {
+	if _, exists := i.Get(key); !exists {
+		return oldVal, existed, i
+	}
+
+	newRoot := copyNode(i.root)
 	var parents []*node[T]
 	var childIndices []int
 
-	currentNode := i.root
+	currentNode := newRoot
 	for len(key) > 0 {
 		childIdx := slices.IndexFunc(currentNode.children, func(n *node[T]) bool {
 			return n.key == key[0]
 		})
-		if childIdx == -1 {
-			return oldVal, existed
-		}
 
 		parents = append(parents, currentNode)
 		childIndices = append(childIndices, childIdx)
-		currentNode = currentNode.children[childIdx]
+		currentNode = copyNode(currentNode.children[childIdx])
+		parents[len(parents)-1].children[childIdx] = currentNode
 		key = key[1:]
 	}
 
@@ -105,7 +112,7 @@ func (i *Iradix[T]) Delete(key []byte) (oldVal T, existed bool) {
 		currentNode = parent
 	}
 
-	return oldVal, existed
+	return oldVal, existed, &Iradix[T]{root: newRoot}
 }
 
 func (i Iradix[T]) Iterate() iter.Seq2[[]byte, T] {
