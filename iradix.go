@@ -5,6 +5,7 @@ import (
 	"iter"
 	"reflect"
 	"slices"
+	"sort"
 )
 
 func New[T any]() *Iradix[T] {
@@ -19,10 +20,7 @@ func (i *Iradix[T]) Get(key []byte) (T, bool) {
 	currentNode := i.root
 
 	for len(key) > 0 {
-		childIdx := slices.IndexFunc(currentNode.children, func(n *node[T]) bool {
-			return len(n.path) > 0 && n.path[0] == key[0]
-		})
-
+		childIdx := findChild(currentNode.children, key[0])
 		if childIdx == -1 {
 			return *new(T), false
 		}
@@ -58,16 +56,14 @@ func (i *Iradix[T]) Insert(key []byte, val T) (oldVal T, existed bool, newTree *
 
 	currentNode := newRoot
 	for len(key) > 0 {
-		childIdx := slices.IndexFunc(currentNode.children, func(n *node[T]) bool {
-			return len(n.path) > 0 && n.path[0] == key[0]
-		})
+		childIdx := findChild(currentNode.children, key[0])
 
 		if childIdx == -1 {
 			newChild := &node[T]{
 				path: slices.Clone(key),
 				val:  &val,
 			}
-			currentNode.children = append(currentNode.children, newChild)
+			insertChild(currentNode, newChild)
 			return oldVal, existed, &Iradix[T]{root: newRoot}
 		}
 
@@ -81,11 +77,11 @@ func (i *Iradix[T]) Insert(key []byte, val T) (oldVal T, existed bool, newTree *
 			key = key[commonLen:]
 		} else {
 			splitNode := &node[T]{
-				path:     slices.Clone(child.path[:commonLen]),
-				children: []*node[T]{copyNode(child)},
+				path: slices.Clone(child.path[:commonLen]),
 			}
-
-			splitNode.children[0].path = slices.Clone(child.path[commonLen:])
+			childCopy := copyNode(child)
+			childCopy.path = slices.Clone(child.path[commonLen:])
+			insertChild(splitNode, childCopy)
 
 			if commonLen == len(key) {
 				splitNode.val = &val
@@ -94,7 +90,7 @@ func (i *Iradix[T]) Insert(key []byte, val T) (oldVal T, existed bool, newTree *
 					path: slices.Clone(key[commonLen:]),
 					val:  &val,
 				}
-				splitNode.children = append(splitNode.children, newChild)
+				insertChild(splitNode, newChild)
 			}
 
 			currentNode.children[childIdx] = splitNode
@@ -121,9 +117,7 @@ func (i *Iradix[T]) Delete(key []byte) (oldVal T, existed bool, newTree *Iradix[
 
 	currentNode := newRoot
 	for len(key) > 0 {
-		childIdx := slices.IndexFunc(currentNode.children, func(n *node[T]) bool {
-			return len(n.path) > 0 && n.path[0] == key[0]
-		})
+		childIdx := findChild(currentNode.children, key[0])
 
 		child := currentNode.children[childIdx]
 		parents = append(parents, currentNode)
@@ -204,4 +198,22 @@ func commonPrefixLen(a, b []byte) int {
 		}
 	}
 	return maxLen
+}
+
+func findChild[T any](children []*node[T], firstByte byte) int {
+	// for some reason binary search is slower here, even when
+	// limiting it to len(children) > 50...?
+	for i, child := range children {
+		if child.path[0] == firstByte {
+			return i
+		}
+	}
+	return -1
+}
+
+func insertChild[T any](parent *node[T], child *node[T]) {
+	insertPos := sort.Search(len(parent.children), func(i int) bool {
+		return parent.children[i].path[0] > child.path[0]
+	})
+	parent.children = slices.Insert(parent.children, insertPos, child)
 }

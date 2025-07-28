@@ -48,12 +48,12 @@ func TestIradixInsertGetDelete(t *testing.T) {
 			iradix: New[string](),
 			items: []testItem{
 				{
-					key: []byte("foo"),
-					val: "foo-val",
-				},
-				{
 					key: []byte("fom"),
 					val: "fom-val",
+				},
+				{
+					key: []byte("foo"),
+					val: "foo-val",
 				},
 			},
 		},
@@ -62,12 +62,12 @@ func TestIradixInsertGetDelete(t *testing.T) {
 			iradix: New[string](),
 			items: []testItem{
 				{
-					key: []byte("foo"),
-					val: "foo-val",
-				},
-				{
 					key: []byte("bar"),
 					val: "bar-val",
+				},
+				{
+					key: []byte("foo"),
+					val: "foo-val",
 				},
 			},
 		},
