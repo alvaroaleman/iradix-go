@@ -14,6 +14,7 @@ func New[T any]() *Iradix[T] {
 
 type Iradix[T any] struct {
 	root *node[T]
+	len  int
 }
 
 func (i *Iradix[T]) Get(key []byte) (T, bool) {
@@ -51,7 +52,10 @@ func (i *Iradix[T]) Insert(key []byte, val T) (oldVal T, existed bool, newTree *
 			oldVal, existed = *newRoot.val, true
 		}
 		newRoot.val = &val
-		return oldVal, existed, &Iradix[T]{root: newRoot}
+		return oldVal, existed, &Iradix[T]{
+			root: newRoot,
+			len:  i.len + 1,
+		}
 	}
 
 	currentNode := newRoot
@@ -64,7 +68,10 @@ func (i *Iradix[T]) Insert(key []byte, val T) (oldVal T, existed bool, newTree *
 				val:  &val,
 			}
 			insertChild(currentNode, newChild)
-			return oldVal, existed, &Iradix[T]{root: newRoot}
+			return oldVal, existed, &Iradix[T]{
+				root: newRoot,
+				len:  i.len + 1,
+			}
 		}
 
 		child := currentNode.children[childIdx]
@@ -94,7 +101,10 @@ func (i *Iradix[T]) Insert(key []byte, val T) (oldVal T, existed bool, newTree *
 			}
 
 			currentNode.children[childIdx] = splitNode
-			return oldVal, existed, &Iradix[T]{root: newRoot}
+			return oldVal, existed, &Iradix[T]{
+				root: newRoot,
+				len:  i.len + 1,
+			}
 		}
 	}
 
@@ -103,7 +113,7 @@ func (i *Iradix[T]) Insert(key []byte, val T) (oldVal T, existed bool, newTree *
 	}
 	currentNode.val = &val
 
-	return oldVal, existed, &Iradix[T]{root: newRoot}
+	return oldVal, existed, &Iradix[T]{root: newRoot, len: i.len + 1}
 }
 
 func (i *Iradix[T]) Delete(key []byte) (oldVal T, existed bool, newTree *Iradix[T]) {
@@ -151,7 +161,7 @@ func (i *Iradix[T]) Delete(key []byte) (oldVal T, existed bool, newTree *Iradix[
 		currentNode = parent
 	}
 
-	return oldVal, existed, &Iradix[T]{root: newRoot}
+	return oldVal, existed, &Iradix[T]{root: newRoot, len: i.len - 1}
 }
 
 func (i Iradix[T]) Iterate() iter.Seq2[[]byte, T] {
@@ -175,6 +185,8 @@ func (i Iradix[T]) Iterate() iter.Seq2[[]byte, T] {
 		iterate(nil, i.root)
 	}
 }
+
+func (i Iradix[T]) Len() int { return i.len }
 
 type node[T any] struct {
 	path     []byte

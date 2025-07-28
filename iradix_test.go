@@ -164,6 +164,7 @@ func TestIradixInsertGetDelete(t *testing.T) {
 			// Item by item create->get->delete
 			for _, item := range tc.items {
 				tree = validateInsert(t, tree, item)
+				require.Equal(t, 1, tree.Len())
 
 				itemsExcludingCurrent := slices.DeleteFunc(slices.Clone(tc.items), func(i testItem) bool {
 					return reflect.DeepEqual(item, i)
@@ -175,10 +176,12 @@ func TestIradixInsertGetDelete(t *testing.T) {
 				require.Equal(t, item.val, val)
 
 				tree = validateDelete(t, tree, true, item)
+				require.Equal(t, 0, tree.Len())
 			}
 
 			// Batch create, get, list and delete
 			tree = validateInsert(t, tree, tc.items...)
+			require.Equal(t, len(tc.items), tree.Len())
 
 			for _, item := range tc.items {
 				val, exists := tree.Get(item.key)
@@ -197,6 +200,7 @@ func TestIradixInsertGetDelete(t *testing.T) {
 			}
 
 			tree = validateDelete(t, tree, true, tc.items...)
+			require.Equal(t, 0, tree.Len())
 		})
 	}
 }
@@ -318,11 +322,13 @@ func TestPathCompressionUpdates(t *testing.T) {
 
 			tree := New[string]()
 
-			for _, item := range tc.setup {
+			for idx, item := range tc.setup {
 				tree = validateInsert(t, tree, item)
+				require.Equal(t, idx+1, tree.Len())
 			}
 
 			tree = validateInsert(t, tree, tc.update)
+			require.Equal(t, len(tc.setup)+1, tree.Len())
 
 			val, exists := tree.Get(tc.update.key)
 			require.True(t, exists)
@@ -396,12 +402,14 @@ func TestPathCompressionDeletion(t *testing.T) {
 
 			tree := New[string]()
 
-			for _, item := range tc.setup {
+			for idx, item := range tc.setup {
 				tree = validateInsert(t, tree, item)
+				require.Equal(t, idx+1, tree.Len())
 			}
 
 			_, existed, tree := tree.Delete(tc.delete)
 			require.True(t, existed)
+			require.Equal(t, len(tc.setup)-1, tree.Len())
 			validateTree(t, tree)
 
 			for _, item := range tc.expect {
