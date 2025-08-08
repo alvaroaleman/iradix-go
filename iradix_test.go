@@ -496,3 +496,20 @@ func BenchmarkIradixWriteRead(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkIterate(b *testing.B) {
+	const value = "the value we store"
+	tree := New[string]()
+	for i := range 100 {
+		for j := range 1000 {
+			tree.Insert([]byte(fmt.Sprintf("prefix%d/%d", i, j)), value)
+		}
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for k, v := range tree.Iterate() {
+			_, _ = k, v
+		}
+	}
+}
